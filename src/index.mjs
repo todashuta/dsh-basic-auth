@@ -111,10 +111,9 @@ export function createIndexHandler(ctx, settings) {
       { method: 'GET', url: `/?${new URLSearchParams({ token }).toString()}`, headers },
       () => undefined,
     )
-    if (exchange === undefined || exchange.status !== 303 || !exchange.headers.has('set-cookie')) {
-      return undefined
-    }
-    return exchange
+    if (exchange === undefined || exchange.status !== 303) return undefined
+    const cookie = exchange.headers.get('set-cookie')
+    return cookie === null ? undefined : cookie
   }
 
   return async function handleIndex(request) {
@@ -133,7 +132,13 @@ export function createIndexHandler(ctx, settings) {
     if (!matchesBasicCredential(request.headers.get('authorization'), settings)) {
       return unauthorized(settings, request.method === 'HEAD')
     }
-    return mintCookie(request.headers) ?? unauthorized(settings, request.method === 'HEAD')
+    const cookie = mintCookie(request.headers)
+    if (cookie === undefined) return unauthorized(settings, request.method === 'HEAD')
+    // Serve the index in the same response as the cookie. Returning a 303
+    // here makes the browser request `/` again after storing the cookie; an
+    // environment that delays or rejects that Set-Cookie then loops between
+    // the Basic challenge and the redirect (ERR_TOO_MANY_REDIRECTS).
+    return withCookie(await readIndex(request), cookie)
   }
 }
 
@@ -160,6 +165,23 @@ function captureAuthorizeIndex(ctx, request, onAdmitted) {
   })
   if (admitted) return onAdmitted()
   return new Response(body, { status, headers })
+}
+
+/**
+ * Re-emit an index response with the freshly minted session cookie.
+ * @param response - index response from the fallback seat.
+ * @param cookie - `Set-Cookie` value minted by Connection.
+ * @returns the same body carrying `set-cookie` and `cache-control: no-store`.
+ */
+function withCookie(response, cookie) {
+  const headers = new Headers(response.headers)
+  headers.append('set-cookie', cookie)
+  headers.set('cache-control', 'no-store')
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
 }
 
 /**

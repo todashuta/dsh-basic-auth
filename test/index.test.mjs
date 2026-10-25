@@ -117,7 +117,7 @@ test('an admitted cookie reads the index', async () => {
   assert.equal(state.read.request.url, 'http://dsh.invalid/index.html')
 })
 
-test('a valid Basic credential mints the signed cookie', async () => {
+test('a valid Basic credential mints the signed cookie and serves the index', async () => {
   const { ctx, state } = fixture({
     authorizeIndex(request, response) {
       assert.match(request.url, /^\/\?token=test-token$/u)
@@ -133,9 +133,26 @@ test('a valid Basic credential mints the signed cookie', async () => {
   const response = await handle(new Request('http://x/', {
     headers: { authorization: basic('dsh', 's3cret') },
   }))
-  assert.equal(response.status, 303)
+  assert.equal(response.status, 200)
   assert.equal(response.headers.get('set-cookie'), 'dsh-auth-test=session')
-  assert.equal(response.headers.get('location'), './')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.equal(await response.text(), '<html>index</html>')
+  assert.equal(state.read.peer.id, 'browser')
+})
+
+test('a failed token exchange answers 401 instead of serving the index', async () => {
+  const { ctx, state } = fixture({
+    authorizeIndex(request, response) {
+      response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
+      response.end('unauthorized\n')
+      return false
+    },
+  })
+  const handle = createIndexHandler(ctx, SETTINGS)
+  const response = await handle(new Request('http://x/', {
+    headers: { authorization: basic('dsh', 's3cret') },
+  }))
+  assert.equal(response.status, 401)
   assert.equal(state.read, undefined)
 })
 

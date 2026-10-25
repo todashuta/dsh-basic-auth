@@ -19,14 +19,14 @@ dsh-basic-auth（exact route "/"）
   ├─ Authorization: Basic ────────► 資格情報を検証
   │                                   │
   │                                   ├─ OK ──► authorizeIndex() を合成リクエストで呼ぶ
-  │                                   │          └─ 303 + Set-Cookie を返す
+  │                                   │          └─ 200 + Set-Cookie（index をそのまま返す）
   │                                   │
   │                                   └─ NG ──► 401 + WWW-Authenticate
   │
   └─ ?token=... ──────────────────► 既存のトークン交換（303 + Set-Cookie）
 ```
 
-- Cookie がない状態で Basic 認証に成功すると、DSH の署名 Cookie を発行して `./` に 303 でリダイレクトします。
+- Cookie がない状態で Basic 認証に成功すると、DSH の署名 Cookie を発行し、同じレスポンスで index を返します。303 リダイレクトを挟まないため、Cookie の保存が遅い環境でもリダイレクトループになりません。
 - 以後の `/api` と WebSocket は、これまでどおり Connection の Cookie 認証で保護されます。
 - 既存の `?token=...` URL も引き続き使えます（ブックマークや起動スクリプトの互換性のため）。
 - パスワードが未設定または空の場合は Basic 認証を有効にせず、DSH 本来のトークン方式のまま動きます。
@@ -107,6 +107,7 @@ dsh web: HTTP Basic authentication is enabled for user "dsh"
 ## 既知の制約
 
 - 署名 Cookie の発行に `ctx.connection.authorizeIndex()` を合成リクエストで呼んでいます。これは DSH が index 用に公開している API で、公式の認証拡張点ではありません。DSH のアップデートで動かなくなる可能性があります。
+- Cookie が保存されない環境では、index は表示されても `/api` が 401 になります。DSH を TLS で動かしているのに HTTP でアクセスしている場合、`Secure` Cookie が保存されないため HTTPS でアクセスしてください。リバースプロキシ配下で `Host` が書き換わる環境では、Cookie の audience が一致せず再ログインが必要になることがあります。
 - `/index.html` を直接開いた場合、Basic チャレンジは出ません（Cookie があれば通ります）。通常は `/` から入るため実用上は問題ありません。
 - overlay で `openBrowser: false` にしているため、起動時の自動ブラウザオープンは無効です。表示された URL を手動で開いてください。
 - 複数ユーザーには対応していません。
