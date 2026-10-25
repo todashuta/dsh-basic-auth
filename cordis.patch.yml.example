@@ -1,0 +1,33 @@
+# dsh-basic-auth overlay for `dsh --patch <this file> --profile web`.
+#
+# Two changes:
+#
+# 1. The `web-runtime` row stops printing the tokenized URL and opening a
+#    browser, because this plugin prints the clean URL instead. A patch
+#    replaces the whole `config` of the row it targets, so every key that row
+#    owns is restated here (openBrowser, printUrl, publicUrl, surfaceContext).
+#
+# 2. The plugin is inserted after the bundle rows. `name` must be an absolute
+#    `file://` URL: a relative plugin name resolves against the profile
+#    directory, not against this file, so a relative path would not find the
+#    checkout.
+#
+# Before use, replace REPLACE/WITH/ABS/PATH with this directory's absolute
+# path (for example /home/shuta/repos/github.com/todashuta/dsh-basic-auth).
+
+- id: web-runtime
+  config:
+    openBrowser: false
+    printUrl: false
+    publicUrl: !!js ctx.webStartup.publicUrl
+    surfaceContext: true
+
+- insert:
+    - id: dsh-basic-auth
+      name: file:///REPLACE/WITH/ABS/PATH/dsh-basic-auth/src/index.mjs
+      config:
+        username: dsh
+        # Absent or empty disables Basic authentication and leaves DSH's
+        # token-only flow untouched, so a missing variable fails safe.
+        password: !!js process.env.DSH_WEB_PASSWORD
+        realm: DeepSeek Harness
