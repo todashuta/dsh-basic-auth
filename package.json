@@ -1,27 +1,39 @@
 {
   "name": "dsh-basic-auth",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "HTTP Basic authentication gate for the DeepSeek Harness Web GUI",
   "type": "module",
   "main": "./src/index.mjs",
   "exports": {
-    ".": "./src/index.mjs"
+    ".": "./src/index.mjs",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
   },
   "files": [
     "src",
-    "cordis.patch.yml.example",
-    "README.md"
+    "cordis.patch.yml",
+    "locale",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "node --test test/"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": ">=0.2.1-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   },
   "keywords": [
     "deepseek-harness",
     "dsh",
     "plugin",
+    "bundle",
     "basic-auth"
   ],
   "license": "MIT"

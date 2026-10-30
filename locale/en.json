@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Basic authentication",
+    "description": "Require an HTTP Basic credential before the Web GUI serves its index."
+  }
+}
