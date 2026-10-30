@@ -1,4 +1,5 @@
-# dsh-basic-auth overlay for `dsh --patch <this file> --profile web`.
+# dsh-basic-auth bundle patch: installed with `dsh plugin add` and selected as
+# a profile bundle.
 #
 # Two changes:
 #
@@ -7,13 +8,10 @@
 #    replaces the whole `config` of the row it targets, so every key that row
 #    owns is restated here (openBrowser, printUrl, publicUrl, surfaceContext).
 #
-# 2. The plugin is inserted after the bundle rows. `name` must be an absolute
-#    `file://` URL: a relative plugin name resolves against the profile
-#    directory, not against this file, so a relative path would not find the
-#    checkout.
-#
-# Before use, replace REPLACE/WITH/ABS/PATH with this directory's absolute
-# path (for example /home/shuta/repos/github.com/todashuta/dsh-basic-auth).
+# 2. The plugin is inserted by package name. `dsh plugin add` installs this
+#    package into the profile's node_modules, so the Loader resolves the bare
+#    name from the profile. An absolute file:// URL would pin the checkout and
+#    break as soon as the package moves.
 
 - id: web-runtime
   config:
@@ -24,7 +22,7 @@
 
 - insert:
     - id: dsh-basic-auth
-      name: file:///REPLACE/WITH/ABS/PATH/dsh-basic-auth/src/index.mjs
+      name: dsh-basic-auth
       config:
         username: dsh
         # Absent or empty disables Basic authentication and leaves DSH's

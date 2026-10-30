@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Basic 認証",
+    "description": "Web GUI が index を返す前に HTTP Basic 認証を要求します。"
+  }
+}
