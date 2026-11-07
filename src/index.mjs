@@ -22,10 +22,7 @@
 
 import { createHash, timingSafeEqual } from 'node:crypto'
 
-/** Stable Cordis plugin name. */
 export const name = 'dsh-basic-auth'
-
-/** Services required before the index route can be claimed. */
 export const inject = ['webServer', 'connection', 'webApp']
 
 const DEFAULT_USERNAME = 'dsh'
@@ -35,7 +32,7 @@ const INDEX_URL = 'http://dsh.invalid/index.html'
 const TOKEN_PROBE_URL = 'http://dsh.invalid/'
 const TEXT_HEADERS = { 'cache-control': 'no-store', 'content-type': 'text/plain; charset=utf-8' }
 
-/** One browser session per Host context has already printed its URL. */
+/** Root contexts that have already announced the URL; the plugin may be applied again in the same root context. */
 const ANNOUNCED = new WeakSet()
 
 /**
@@ -87,8 +84,7 @@ export function resolveSettings(config) {
  */
 export function createIndexHandler(ctx, settings) {
   const readIndex = (request) => {
-    // `/index.html` reaches the fallback seat (frontend-static), never this
-    // exact route, so the read cannot recurse into itself.
+    // `/index.html` is served by the static fallback route, not this exact route, so the read cannot recurse into itself.
     const method = request.method === 'HEAD' ? 'HEAD' : 'GET'
     return ctx.webServer.readResource(
       new Request(INDEX_URL, { method }),
