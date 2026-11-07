@@ -1,17 +1,10 @@
-# dsh-basic-auth bundle patch: installed with `dsh plugin add` and selected as
-# a profile bundle.
+# dsh-basic-authのbundle patch。`dsh plugin add`でインストールされ、profile bundleとして選ばれる
 #
-# Two changes:
+# 変更は2つ。
 #
-# 1. The `web-runtime` row stops printing the tokenized URL and opening a
-#    browser, because this plugin prints the clean URL instead. A patch
-#    replaces the whole `config` of the row it targets, so every key that row
-#    owns is restated here (openBrowser, printUrl, publicUrl, surfaceContext).
+# 1. `web-runtime`の行がトークン付きURLの表示とブラウザ起動を止める。このプラグインがトークンなしURLを代わりに表示するためだ。patchは対象の行の`config`を丸ごと置き換えるので、その行が持つkeyはopenBrowser、printUrl、publicUrl、surfaceContextの4つで、すべてここに書き直す
 #
-# 2. The plugin is inserted by package name. `dsh plugin add` installs this
-#    package into the profile's node_modules, so the Loader resolves the bare
-#    name from the profile. An absolute file:// URL would pin the checkout and
-#    break as soon as the package moves.
+# 2. プラグインはpackage名でinsertする。`dsh plugin add`はこのpackageをprofileのnode_modulesに置くため、Loaderはprofileから名前だけで解決できる。絶対file:// URLにするとチェックアウトに固定され、packageが動いた途端に壊れる
 
 - id: web-runtime
   config:
@@ -25,7 +18,6 @@
       name: dsh-basic-auth
       config:
         username: dsh
-        # Absent or empty disables Basic authentication and leaves DSH's
-        # token-only flow untouched, so a missing variable fails safe.
+        # 未設定か空ならBasic認証を無効にし、DSH本来のトークン方式をそのままにする。変数がなくても構成が弱くならないようにする
         password: !!js process.env.DSH_WEB_PASSWORD
         realm: DeepSeek Harness
