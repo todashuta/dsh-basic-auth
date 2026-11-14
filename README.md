@@ -1,6 +1,6 @@
 # dsh-basic-auth
 
-DSH（DeepSeek Harness）のWeb GUIにHTTP Basic認証を追加するDSH bundleです。
+DSH（DeepSeek Harness）のWeb GUIにHTTP Basic認証を追加するDSH bundleです。DSH 0.2.2-rc.3以降で動きます。
 
 起動時に表示される`?token=...`付きURLの代わりに、ブラウザ標準のパスワードダイアログでログインできます。認証に成功するとDSH本来の署名Cookieが発行されるので、`/api`やWebSocketは既存のCookie認証のまま動きます。
 
@@ -102,7 +102,7 @@ bundleのpatchはパッケージ内にあるので、プロファイル側の`co
 
 ## 既知の制約
 
-- 署名Cookieの発行に`ctx.connection.authorizeIndex()`を合成リクエストで呼んでいます。これはDSHがindex用に公開しているAPIで、公式の認証拡張点ではありません。DSHのアップデートで動かなくなる可能性があります。
+- DSH 0.2.2-rc.3で`ctx.connection.authorizeIndex()`と`authenticatedUrl()`がToken Providerへ移りました。このプラグインは`@deepseek-ai/dsh-host-authentication-token`の`src/browser-auth.ts`を直接インポートして、Token Providerと同じ署名鍵とCookie形式を共有しています。このモジュールはパッケージの公開APIではないため、DSHの更新で動かなくなる可能性があります。
 - Cookieが保存されない環境では、indexは表示されても`/api`が401になります。DSHをTLSで動かしているのにHTTPでアクセスしている場合、`Secure` Cookieが保存されないためHTTPSでアクセスしてください。リバースプロキシ配下で`Host`が書き換わる環境では、Cookieのaudienceが一致せず再ログインが必要になることがあります。
 - `/index.html`を直接開いた場合、Basicチャレンジは出ません。Cookieがあればそのまま通ります。通常は`/`から入るため実用上は問題ありません。
 - bundleのpatchで`openBrowser: false`にしているため、起動時の自動ブラウザオープンは無効です。表示されたURLを手動で開いてください。

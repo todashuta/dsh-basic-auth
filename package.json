@@ -1,6 +1,6 @@
 {
   "name": "dsh-basic-auth",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "HTTP Basic authentication gate for the DeepSeek Harness Web GUI",
   "type": "module",
   "main": "./src/index.mjs",
@@ -22,7 +22,12 @@
   },
   "engines": {
     "node": ">=22",
-    "dsh": ">=0.2.1-0"
+    "dsh": ">=0.2.2-rc.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0",
+    "@deepseek-ai/dsh-credentials": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-host-authentication-token": "^0.2.2-rc.3"
   },
   "dsh": {
     "bundle": {

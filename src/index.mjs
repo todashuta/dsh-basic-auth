@@ -3,26 +3,34 @@
  *
  * DSHは、起動プロセスごとのトークンをURLで渡し、それを署名Cookieに交換して
  * ブラウザを認証する。このプラグインはindexの前にもう1つの固定資格情報を加え、
- * 正しい`Authorization: Basic`ヘッダを同じ署名Cookieに交換する。だからHost
- * にある他の通信、つまり`/api`ブリッジとすべてのWebSocketは、既存のCookie
- * 認証のままで動き続ける。
+ * 正しい`Authorization: Basic`ヘッダを同じ署名Cookieに交換する。だからHostに
+ * ある他の通信、つまり`/api`ブリッジとすべてのWebSocketは、既存のCookie認証の
+ * ままで動き続ける。
  *
- * このプラグインは、実行時のimportが`node:crypto`だけの単一ESモジュール。
- * そのためDSHのチェックアウトの外に置けて、`--patch`オーバーレイの絶対
- * `file://` URLから読み込める。
+ * DSH 0.2.2-rc.3で`ctx.connection.authorizeIndex`と`authenticatedUrl`が
+ * Token Providerへ移った。このプラグインは
+ * `@deepseek-ai/dsh-host-authentication-token`の`src/browser-auth.ts`から
+ * BrowserAuthを直接使い、Token Providerと同じ署名鍵とCookie形式を共有する。
+ * このモジュールはパッケージの公開APIではないため、DSHの更新で壊れる可能性がある。
  *
- * `@deepseek-ai/dsh-client-connection`を書き換えない理由：配布パッケージへの
- * patchは、DSHの内部をアップグレードのたびに追いかけなければならず、そもそも
- * チェックアウトが読み取り専用だと適用できない。その代わりとして、Cookieの
- * 発行は`ctx.connection.authorizeIndex()`を合成トークンリクエストで呼ぶ形に
- * なっている。これはDSHがindexルート用に公開しているAPIではあるが、公式の
- * 認証拡張点ではないため、将来のDSHの変更で壊れ得る。
+ * DSH本体のclient-connectionを書き換えない理由：配布パッケージへのpatchは、
+ * DSHの内部をアップグレードのたびに追いかけなければならず、そもそもチェックアウトが
+ * 読み取り専用だと適用できない。
  */
 
 import { createHash, timingSafeEqual } from 'node:crypto'
 
+/** Cordisがプラグインを識別する名前。 */
 export const name = 'dsh-basic-auth'
-export const inject = ['webServer', 'connection', 'webApp']
+
+/** indexルートを登録する前に必要なサービス。 */
+export const inject = ['webServer', 'connection', 'connection.authentication', 'webApp', 'credentials']
+
+/**
+ * Token Providerと同じCookie寿命。
+ * Cookieの形式と署名鍵を共有するので、値も揃える。
+ */
+const COOKIE_MAX_AGE_DAYS = 30
 
 const DEFAULT_USERNAME = 'dsh'
 const DEFAULT_REALM = 'DeepSeek Harness'
@@ -39,14 +47,20 @@ const ANNOUNCED = new WeakSet()
  * @param ctx - このゲートが必要とするWebサービスを載せたCordis context。
  * @param config - 生のプラグイン設定。{@link resolveSettings}を参照。
  */
-export function apply(ctx, config) {
+export async function apply(ctx, config) {
   const settings = resolveSettings(config ?? {})
-  const handle = createIndexHandler(ctx, settings)
+  const { BrowserAuth } = await import('@deepseek-ai/dsh-host-authentication-token/src/browser-auth.ts')
+  const { Context } = await import('@deepseek-ai/cordis')
+  const rootContext = ctx[Context.root]
+  const auth = await BrowserAuth.create(rootContext, ctx.credentials, COOKIE_MAX_AGE_DAYS)
+  const handle = createIndexHandler(ctx, settings, auth)
+  // WebServerの既定はrequiredなので、Basic認証を自前で処理する
+  // このルートはanonymousを明示する
   ctx.effect(
-    () => ctx.webServer.register({ kind: 'exact', path: '/', resource: handle }),
+    () => ctx.webServer.register({ kind: 'exact', path: '/', resource: handle, auth: 'anonymous' }),
     'dsh-basic-auth: index gate',
   )
-  announce(ctx, settings)
+  announce(ctx, settings, auth, rootContext)
 }
 
 /**
@@ -78,11 +92,13 @@ export function resolveSettings(config) {
  * `/`のresourceを作る。トークン交換、Cookieによる通過、その後にBasicの順に判定する。
  * @param ctx - Webサービスを載せたCordis context。
  * @param settings - {@link resolveSettings}が返した検証済み設定。
+ * @param auth - Token Providerと同じCookieを発行するBrowserAuth。
  * @returns `/`のGETとHEADに応じるwebserver resource。
  */
-export function createIndexHandler(ctx, settings) {
+export function createIndexHandler(ctx, settings, auth) {
   const readIndex = (request) => {
-    // `/index.html`は静的fallbackルートの処理対象で、このexactルートには来ないので、indexの読み出しが自分自身に再帰しない
+    // `/index.html`は静的fallbackルートの処理対象で、このexactルートには来ない。
+    // そのためindexの読み出しが自分自身に再帰しない
     const method = request.method === 'HEAD' ? 'HEAD' : 'GET'
     return ctx.webServer.readResource(
       new Request(INDEX_URL, { method }),
@@ -92,16 +108,18 @@ export function createIndexHandler(ctx, settings) {
 
   const tokenExchange = (request) => captureAuthorizeIndex(
     ctx,
+    auth,
     { method: request.method, url: request.url, headers: request.headers },
     () => readIndex(request),
   )
 
   const mintCookie = (headers) => {
-    const tokenUrl = new URL(ctx.connection.authenticatedUrl(TOKEN_PROBE_URL))
+    const tokenUrl = new URL(auth.authenticatedUrl(TOKEN_PROBE_URL))
     const token = tokenUrl.searchParams.get('token')
     if (token === null) return undefined
     const exchange = captureAuthorizeIndex(
       ctx,
+      auth,
       { method: 'GET', url: `/?${new URLSearchParams({ token }).toString()}`, headers },
       () => undefined,
     )
@@ -119,7 +137,8 @@ export function createIndexHandler(ctx, settings) {
     // 403はHost/Originのフェンス。Basic認証では直せない
     if (admission.rejection === 403) return forbidden()
 
-    // パスワードが設定されていないとき、このプラグインは素通しにする。indexの401をBasicで置き換えず、DSH本来のトークン方式のままで出す
+    // パスワードが設定されていないとき、このプラグインは素通しにする。
+    // indexの401をBasicで置き換えず、DSH本来のトークン方式のままで出す
     if (!settings.enabled) return tokenExchange(request)
 
     if (!matchesBasicCredential(request.headers.get('authorization'), settings)) {
@@ -127,24 +146,28 @@ export function createIndexHandler(ctx, settings) {
     }
     const cookie = mintCookie(request.headers)
     if (cookie === undefined) return unauthorized(settings, request.method === 'HEAD')
-    // indexはCookieと同じレスポンスで返す。ここで303を返すと、ブラウザはSet-Cookieを保存した後にもう一度`/`へ取りに来る。Set-Cookieの保存が遅い・拒否される環境では、Basicチャレンジとリダイレクトの間でループする（ERR_TOO_MANY_REDIRECTS）
+    // indexはCookieと同じレスポンスで返す。ここで303を返すと、ブラウザは
+    // Set-Cookieを保存した後にもう一度`/`へ取りに来る。Set-Cookieの保存が
+    // 遅い・拒否される環境では、Basicチャレンジとリダイレクトの間でループする
+    // （ERR_TOO_MANY_REDIRECTS）
     return withCookie(await readIndex(request), cookie)
   }
 }
 
 /**
- * Connectionのindex認証を実行し、そのwriteHead/end応答をFetchのResponseとして
- * 受け取る。
- * @param ctx - `connection`を載せたCordis context。
+ * Token Providerのindex認証を実行し、そのwriteHead/end応答を
+ * FetchのResponseとして受け取る。
+ * @param ctx - `webServer`を載せたCordis context。
+ * @param auth - Token Providerと同じCookieを発行するBrowserAuth。
  * @param request - indexリクエストのmethod、url、headers。
  * @param onAdmitted - リクエストが通ったときの戻り値。
  * @returns 受け取った応答。通ったときは`onAdmitted()`の結果。
  */
-function captureAuthorizeIndex(ctx, request, onAdmitted) {
+function captureAuthorizeIndex(ctx, auth, request, onAdmitted) {
   let status = 401
   let headers = new Headers()
   let body
-  const admitted = ctx.connection.authorizeIndex(request, {
+  const admitted = auth.authorizeIndex(request, {
     writeHead(nextStatus, nextHeaders) {
       status = nextStatus
       headers = new Headers(nextHeaders)
@@ -152,7 +175,7 @@ function captureAuthorizeIndex(ctx, request, onAdmitted) {
     end(text) {
       body = text
     },
-  })
+  }, ctx.webServer.protocol === 'https:')
   if (admitted) return onAdmitted()
   return new Response(body, { status, headers })
 }
@@ -160,7 +183,7 @@ function captureAuthorizeIndex(ctx, request, onAdmitted) {
 /**
  * index応答に、発行したばかりのセッションCookieを付けて返し直す。
  * @param response - fallbackルートから届いたindex応答。
- * @param cookie - Connectionが発行した`Set-Cookie`の値。
+ * @param cookie - Token Providerが発行した`Set-Cookie`の値。
  * @returns 同じbodyに`set-cookie`と`cache-control: no-store`を載せた応答。
  */
 function withCookie(response, cookie) {
@@ -185,7 +208,8 @@ export function matchesBasicCredential(headerValue, settings) {
   if (credential === undefined) return false
   const username = constantTimeMatches(credential.username, settings.username)
   const password = constantTimeMatches(credential.password, settings.password)
-  // ビット演算の`&`で両方の比較を必ず評価する。`&&`だとユーザー名が違うときにパスワード比較が短絡し、タイミングオラクルになる
+  // ビット演算の`&`で両方の比較を必ず評価する。`&&`だとユーザー名が違うときに
+  // パスワード比較が短絡し、タイミングオラクルになる
   return (username & password) === 1
 }
 
@@ -238,22 +262,24 @@ function forbidden() {
 }
 
 /**
- * Loaderツリーの準備ができたら、トークンなしのURLとBasic認証のユーザー名を表示する。
+ * Loaderツリーの準備ができたら、トークンなしのURLとBasic認証のユーザー名を
+ * 表示する。
  *
- * `web-runtime`は`printUrl`を止めない限りトークン付きURLを表示する。この
- * プラグインが同梱するpatchはそれを止め、オペレーターへ届く表示を1行にする。
+ * `web-runtime`は`printUrl`を止めない限りトークン付きURLを表示する。
+ * このプラグインが同梱するpatchはそれを止め、オペレーターへ届く表示を1行にする。
  * Loaderを待つのは、`/api`ルートの持ち主と表示の順序で競合しないためで、
  * `web-app`がLoaderを待つのと同じ理由である。
  * @param ctx - `webApp`とLoaderを載せたCordis context。
  * @param settings - どちらのURL形を表示するかを決める検証済み設定。
+ * @param auth - トークン付きURLを作るBrowserAuth。
+ * @param rootContext - URL表示済みかどうかを覚えるroot context。
  */
-function announce(ctx, settings) {
+function announce(ctx, settings, auth, rootContext) {
   const ready = () => {
-    const root = ctx.root ?? ctx
-    if (ANNOUNCED.has(root)) return
-    ANNOUNCED.add(root)
+    if (ANNOUNCED.has(rootContext)) return
+    ANNOUNCED.add(rootContext)
     const url = ctx.webApp.getAdvertisedUrl()
-    console.log(`dsh web: ${settings.enabled ? url : ctx.connection.authenticatedUrl(url)}`)
+    console.log(`dsh web: ${settings.enabled ? url : auth.authenticatedUrl(url)}`)
     if (settings.enabled) {
       console.log(`dsh web: HTTP Basic authentication is enabled for user ${JSON.stringify(settings.username)}`)
     }

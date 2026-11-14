@@ -16,11 +16,21 @@ function basic(username, password) {
 
 function fixture(overrides = {}) {
   const state = { ...overrides }
+  const auth = {
+    authorizeIndex(request, response, secure) {
+      if (state.authorizeIndex !== undefined) return state.authorizeIndex(request, response, secure)
+      response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
+      response.end('unauthorized\n')
+      return false
+    },
+    authenticatedUrl(base) { return `${base}?token=test-token` },
+  }
   const ctx = {
     root: {},
     get: () => undefined,
     effect(fn) { return fn() },
     webServer: {
+      protocol: 'http:',
       register(route) {
         state.registered = route
         return () => {}
@@ -37,18 +47,11 @@ function fixture(overrides = {}) {
       admit(request) {
         return state.admit === undefined ? { rejection: 401 } : state.admit(request)
       },
-      authorizeIndex(request, response) {
-        if (state.authorizeIndex !== undefined) return state.authorizeIndex(request, response)
-        response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
-        response.end('unauthorized\n')
-        return false
-      },
-      authenticatedUrl(base) { return `${base}?token=test-token` },
       browserPeer: { id: 'browser' },
     },
     webApp: { getAdvertisedUrl: () => 'http://localhost:3080/' },
   }
-  return { ctx, state }
+  return { ctx, state, auth }
 }
 
 test('resolveSettings defaults to the token-only flow', () => {
@@ -108,8 +111,8 @@ test('constantTimeMatches compares two secrets', () => {
 })
 
 test('an admitted cookie reads the index', async () => {
-  const { ctx, state } = fixture({ admit: () => ({ peer: { id: 'browser' } }) })
-  const handle = createIndexHandler(ctx, SETTINGS)
+  const { ctx, state, auth } = fixture({ admit: () => ({ peer: { id: 'browser' } }) })
+  const handle = createIndexHandler(ctx, SETTINGS, auth)
   const response = await handle(new Request('http://x/'))
   assert.equal(response.status, 200)
   assert.equal(await response.text(), '<html>index</html>')
@@ -118,9 +121,10 @@ test('an admitted cookie reads the index', async () => {
 })
 
 test('a valid Basic credential mints the signed cookie and serves the index', async () => {
-  const { ctx, state } = fixture({
-    authorizeIndex(request, response) {
+  const { ctx, state, auth } = fixture({
+    authorizeIndex(request, response, secure) {
       assert.match(request.url, /^\/\?token=test-token$/u)
+      assert.equal(secure, false)
       response.writeHead(303, {
         location: './',
         'set-cookie': 'dsh-auth-test=session',
@@ -129,7 +133,7 @@ test('a valid Basic credential mints the signed cookie and serves the index', as
       return false
     },
   })
-  const handle = createIndexHandler(ctx, SETTINGS)
+  const handle = createIndexHandler(ctx, SETTINGS, auth)
   const response = await handle(new Request('http://x/', {
     headers: { authorization: basic('dsh', 's3cret') },
   }))
@@ -141,14 +145,14 @@ test('a valid Basic credential mints the signed cookie and serves the index', as
 })
 
 test('a failed token exchange answers 401 instead of serving the index', async () => {
-  const { ctx, state } = fixture({
+  const { ctx, state, auth } = fixture({
     authorizeIndex(request, response) {
       response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
       response.end('unauthorized\n')
       return false
     },
   })
-  const handle = createIndexHandler(ctx, SETTINGS)
+  const handle = createIndexHandler(ctx, SETTINGS, auth)
   const response = await handle(new Request('http://x/', {
     headers: { authorization: basic('dsh', 's3cret') },
   }))
@@ -157,8 +161,8 @@ test('a failed token exchange answers 401 instead of serving the index', async (
 })
 
 test('a wrong Basic credential answers 401 with a challenge', async () => {
-  const { ctx } = fixture()
-  const handle = createIndexHandler(ctx, SETTINGS)
+  const { ctx, auth } = fixture()
+  const handle = createIndexHandler(ctx, SETTINGS, auth)
   const response = await handle(new Request('http://x/', {
     headers: { authorization: basic('dsh', 'wrong') },
   }))
@@ -168,7 +172,7 @@ test('a wrong Basic credential answers 401 with a challenge', async () => {
 })
 
 test('a launch-token URL keeps its 303 flow', async () => {
-  const { ctx } = fixture({
+  const { ctx, auth } = fixture({
     authorizeIndex(request, response) {
       assert.equal(request.url, 'http://x/?token=legacy')
       response.writeHead(303, { location: './', 'set-cookie': 'dsh-auth-test=session' })
@@ -176,14 +180,14 @@ test('a launch-token URL keeps its 303 flow', async () => {
       return false
     },
   })
-  const handle = createIndexHandler(ctx, SETTINGS)
+  const handle = createIndexHandler(ctx, SETTINGS, auth)
   const response = await handle(new Request('http://x/?token=legacy'))
   assert.equal(response.status, 303)
 })
 
 test('without a password the handler delegates to the token flow', async () => {
-  const { ctx, state } = fixture()
-  const handle = createIndexHandler(ctx, { ...SETTINGS, password: '', enabled: false })
+  const { ctx, state, auth } = fixture()
+  const handle = createIndexHandler(ctx, { ...SETTINGS, password: '', enabled: false }, auth)
   const response = await handle(new Request('http://x/'))
   assert.equal(response.status, 401)
   assert.equal(response.headers.get('www-authenticate'), null)
@@ -191,16 +195,16 @@ test('without a password the handler delegates to the token flow', async () => {
 })
 
 test('the Host/Origin fence stays a 403', async () => {
-  const { ctx } = fixture({ admit: () => ({ rejection: 403 }) })
-  const handle = createIndexHandler(ctx, SETTINGS)
+  const { ctx, auth } = fixture({ admit: () => ({ rejection: 403 }) })
+  const handle = createIndexHandler(ctx, SETTINGS, auth)
   const response = await handle(new Request('http://x/'))
   assert.equal(response.status, 403)
   assert.equal(await response.text(), 'forbidden\n')
 })
 
 test('HEAD omits the challenge body', async () => {
-  const { ctx } = fixture()
-  const handle = createIndexHandler(ctx, SETTINGS)
+  const { ctx, auth } = fixture()
+  const handle = createIndexHandler(ctx, SETTINGS, auth)
   const response = await handle(new Request('http://x/', { method: 'HEAD' }))
   assert.equal(response.status, 401)
   assert.equal(await response.text(), '')
